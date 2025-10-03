@@ -1,1 +1,24 @@
-local Camera = workspace.CurrentCameralocal Players = game:GetService("Players")local RunService = game:GetService("RunService")local UserInputService = game:GetService("UserInputService")local TweenService = game:GetService("TweenService")local LocalPlayer = Players.LocalPlayerlocal Holding = false _G.AimbotEnabled = true _G.TeamCheck = false -- If set to true then the script would only lock your aim at enemy team members. _G.AimPart = "Head" -- Where the aimbot script would lock at. _G.Sensitivity = 0 -- How many seconds it takes for the aimbot script to officiallylock onto the target's aimpart. _G.CircleSides = 64 -- How many sides the FOV circle would have. _G.CircleColor = Color3.fromRGB(255, 255, 255) -- (RGB) Color that the FOV circle would appear as. _G.CircleTransparency = 0.7 -- Transparency of the circle. _G.CircleRadius = 80 -- The radius of the circle / FOV. _G.CircleFilled = false -- Determines whether or not the circle is filled. _G.CircleVisible = true -- Determines whether or not the circle is visible. _G.CircleThickness = 0 -- The thickness of the circle.local FOVCircle = Drawing.new("Circle")FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y /2)FOVCircle.Radius = _G.CircleRadiusFOVCircle.Filled = _G.CircleFilledFOVCircle.Color = _G.CircleColorFOVCircle.Visible = _G.CircleVisibleFOVCircle.Radius = _G.CircleRadiusFOVCircle.Transparency = _G.CircleTransparencyFOVCircle.NumSides = _G.CircleSidesFOVCircle.Thickness = _G.CircleThicknesslocal function GetClosestPlayer()local MaximumDistance = _G.CircleRadiuslocal Target = nilfor _, v in next, Players:GetPlayers() doif v.Name ~= LocalPlayer.Name thenif _G.TeamCheck == true thenif v.Team ~= LocalPlayer.Team thenif v.Character ~= nil thenif v.Character:FindFirstChild("HumanoidRootPart") ~= nil thenif v.Character:FindFirstChild("Humanoid")~= nil and v.Character:FindFirstChild("Humanoid").Health ~= 0 thenlocal ScreenPoint = Camera:WorldToScreenPoint(v.Character:WaitForChild("HumanoidRootPart", math.huge).Position)local VectorDistance = (Vector2.new(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y) - Vector2.new(ScreenPoint.X, ScreenPoint.Y)).Magnitudeif VectorDistance < MaximumDistancethen
+--[[ Simulação de ESP para Teste de Devs
+     NÃO coleta dados de players reais.
+     Apenas mostra como um ESP se comportaria.
+--]]
+
+local Players = {
+    {Name = "Jogador1", Team = "Azul", X = 50, Y = 100},
+    {Name = "Jogador2", Team = "Vermelho", X = 150, Y = 200},
+    {Name = "Jogador3", Team = "Azul", X = 250, Y = 300}
+}
+
+local LocalPlayerTeam = "Azul"
+
+-- Função de "render" para simular o ESP
+local function RenderESP()
+    for _, player in ipairs(Players) do
+        local color = (player.Team == LocalPlayerTeam) and "Verde (Aliado)" or "Vermelho (Inimigo)"
+        print("["..color.."] "..player.Name.." - Posição: ("..player.X..","..player.Y..")")
+    end
+end
+
+-- Interface simples (console)
+print("=== ESP SIMULADO - TESTE DE TEAM CHECK ===")
+RenderESP()

@@ -1,175 +1,206 @@
--- TrainingClient (LocalScript)
--- Mostra UI de crosshair, faz raycast no clique e envia posição para o servidor via RemoteEvent
--- Também exibe HUD com score/accuracy lidas do leaderstats.
+-- TargetManager (ServerScriptService)
+-- Gera alvos, valida hits vindos do cliente e controla pontuação
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Debris = game:GetService("Debris")
+local Workspace = game:GetService("Workspace")
 
-local localPlayer = Players.LocalPlayer
-local camera = workspace.CurrentCamera
-local event = ReplicatedStorage:WaitForChild("TrainingEvent")
+-- RemoteEvent
+local event = ReplicatedStorage:FindFirstChild("TrainingEvent")
+if not event then
+    event = Instance.new("RemoteEvent")
+    event.Name = "TrainingEvent"
+    event.Parent = ReplicatedStorage
+end
 
--- UI
-local playerGui = localPlayer:WaitForChild("PlayerGui")
-local screenGui = Instance.new("ScreenGui", playerGui)
-screenGui.Name = "TrainingClientGUI"
-screenGui.ResetOnSpawn = false
+-- Config
+local ARENA_FOLDER_NAME = "TrainingArena"
+local TARGET_COUNT = 8
+local TARGET_RADIUS = 2.5       -- raio (studs) pra considerar um acerto
+local TARGET_LIFETIME = 6      -- segundos visível antes de sumir / respawn
+local RESPAWN_DELAY = 1.2
 
--- Crosshair
-local cross = Instance.new("Frame", screenGui)
-cross.Name = "Crosshair"
-cross.Size = UDim2.new(0,2,0,2)
-cross.BackgroundColor3 = Color3.new(1,1,1)
-cross.AnchorPoint = Vector2.new(0.5,0.5)
-cross.Position = UDim2.new(0.5,0.5,0.5,0)
-cross.ZIndex = 50
+-- Localiza / cria folder de arena
+local arenaFolder = Workspace:FindFirstChild(ARENA_FOLDER_NAME)
+if not arenaFolder then
+    arenaFolder = Instance.new("Folder")
+    arenaFolder.Name = ARENA_FOLDER_NAME
+    arenaFolder.Parent = Workspace
+end
 
-local crossV = Instance.new("Frame", screenGui)
-crossV.Size = UDim2.new(0,12,0,2)
-crossV.Position = UDim2.new(0.5,-6,0.5, -1)
-crossV.BackgroundColor3 = Color3.new(1,1,1)
-crossV.AnchorPoint = Vector2.new(0,0)
-crossV.ZIndex = 50
+-- Função util: cria um target físico (part) em posição aleatória dentro de uma área
+local function createTarget(position)
+    local part = Instance.new("Part")
+    part.Size = Vector3.new(1.4, 1.4, 1.4)
+    part.Shape = Enum.PartType.Ball
+    part.Material = Enum.Material.Neon
+    part.Anchored = true
+    part.CanCollide = false
+    part.Position = position
+    part.Name = "TrainingTarget"
+    part.Parent = arenaFolder
 
-local crossH = Instance.new("Frame", screenGui)
-crossH.Size = UDim2.new(0,2,0,12)
-crossH.Position = UDim2.new(0.5,-1,0.5,-6)
-crossH.BackgroundColor3 = Color3.new(1,1,1)
-crossH.AnchorPoint = Vector2.new(0,0)
-crossH.ZIndex = 50
+    -- Tag visual (Billboard)
+    local bill = Instance.new("BillboardGui", part)
+    bill.Size = UDim2.new(0,100,0,30)
+    bill.StudsOffset = Vector3.new(0, 1.7, 0)
+    bill.AlwaysOnTop = true
+    local frame = Instance.new("Frame", bill)
+    frame.Size = UDim2.new(1,0,1,0)
+    frame.BackgroundTransparency = 0.2
+    frame.BackgroundColor3 = Color3.fromRGB(0,0,0)
+    local txt = Instance.new("TextLabel", frame)
+    txt.Size = UDim2.new(1,-6,1,-6)
+    txt.Position = UDim2.new(0,3,0,3)
+    txt.BackgroundTransparency = 1
+    txt.Text = "ALVO"
+    txt.Font = Enum.Font.GothamBold
+    txt.TextColor3 = Color3.fromRGB(255,255,255)
+    txt.TextScaled = true
 
--- HUD (score / hits / shots / accuracy)
-local hud = Instance.new("Frame", screenGui)
-hud.Name = "HUD"
-hud.Size = UDim2.new(0,200,0,80)
-hud.Position = UDim2.new(0.01,0,0.01,0)
-hud.BackgroundTransparency = 0.15
-hud.BackgroundColor3 = Color3.fromRGB(10,10,10)
-hud.BorderSizePixel = 0
-hud.ZIndex = 60
-local uiCorner = Instance.new("UICorner", hud)
-uiCorner.CornerRadius = UDim.new(0,8)
+    return part
+end
 
-local title = Instance.new("TextLabel", hud)
-title.Size = UDim2.new(1, -12, 0, 22)
-title.Position = UDim2.new(0,6,0,6)
-title.BackgroundTransparency = 1
-title.Text = "Treino de Mira"
-title.Font = Enum.Font.GothamBold
-title.TextColor3 = Color3.fromRGB(230,230,230)
-title.TextSize = 16
-title.TextXAlignment = Enum.TextXAlignment.Left
+-- Gera posições dentro de uma área simples (retângulo) — ajuste conforme seu mapa
+local function randomPositions(center, rangeX, rangeZ, count)
+    local positions = {}
+    for i = 1, count do
+        local x = center.X + math.random(-rangeX*10, rangeX*10) / 10
+        local z = center.Z + math.random(-rangeZ*10, rangeZ*10) / 10
+        local y = center.Y
+        -- garante pelo menos um pequeno offset de altura
+        table.insert(positions, Vector3.new(x, y, z))
+    end
+    return positions
+end
 
-local scoreLabel = Instance.new("TextLabel", hud)
-scoreLabel.Size = UDim2.new(1, -12, 0, 18)
-scoreLabel.Position = UDim2.new(0,6,0,32)
-scoreLabel.BackgroundTransparency = 1
-scoreLabel.Text = "Score: 0"
-scoreLabel.Font = Enum.Font.Gotham
-scoreLabel.TextColor3 = Color3.fromRGB(220,220,220)
-scoreLabel.TextSize = 14
-scoreLabel.TextXAlignment = Enum.TextXAlignment.Left
+-- Gera targets iniciais
+local function spawnTargets()
+    -- centraliza na posição do SpawnLocation se existir, senão usa posição (0,5,0)
+    local center = Vector3.new(0, 5, 0)
+    local spawnLocation = Workspace:FindFirstChildWhichIsA("SpawnLocation")
+    if spawnLocation then center = spawnLocation.Position + Vector3.new(0, 3, 0) end
 
-local statsLabel = Instance.new("TextLabel", hud)
-statsLabel.Size = UDim2.new(1, -12, 0, 18)
-statsLabel.Position = UDim2.new(0,6,0,50)
-statsLabel.BackgroundTransparency = 1
-statsLabel.Text = "Hits: 0 | Shots: 0 | Accuracy: 0%"
-statsLabel.Font = Enum.Font.Gotham
-statsLabel.TextColor3 = Color3.fromRGB(200,200,200)
-statsLabel.TextSize = 13
-statsLabel.TextXAlignment = Enum.TextXAlignment.Left
-
--- envia clique para o servidor (pos = mouse.Hit.Position)
-local function onClick()
-    local mouse = localPlayer:GetMouse()
-    if not mouse then return end
-    local targetPos = mouse.Hit and mouse.Hit.Position
-    if targetPos then
-        -- envia a posição para o servidor validar
-        event:FireServer({position = targetPos, timestamp = tick()})
+    local posList = randomPositions(center, 20, 12, TARGET_COUNT)
+    for i, pos in ipairs(posList) do
+        local t = createTarget(pos)
+        -- movimento simples: tween vertical +/- e loop
+        local amplitude = 1 + math.random() * 1.6
+        local speed = 1 + math.random() * 1.8
+        spawn(function()
+            local direction = 1
+            while t.Parent and t:IsDescendantOf(game) do
+                local newPos = t.Position + Vector3.new(0, 0.8 * math.sin(tick()*speed) * amplitude, 0)
+                t.Position = newPos
+                wait(0.03)
+            end
+        end)
     end
 end
 
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        onClick()
-    end
-end)
+-- Remove e respawn target (quando acertado)
+local function handleTargetHit(targetPart)
+    if not (targetPart and targetPart:IsDescendantOf(arenaFolder)) then return end
+    -- efeito visual
+    local p = Instance.new("Part")
+    p.Size = Vector3.new(1.5, 1.5, 1.5)
+    p.CFrame = targetPart.CFrame
+    p.Anchored = true
+    p.CanCollide = false
+    p.Material = Enum.Material.Neon
+    p.BrickColor = BrickColor.new("Bright red")
+    p.Parent = arenaFolder
+    Debris:AddItem(p, 0.6)
 
--- Atualiza HUD pegando leaderstats do jogador (server cria leaderstats)
-local function updateHUD()
-    local ls = localPlayer:FindFirstChild("leaderstats")
-    if ls then
-        local score = ls:FindFirstChild("Score")
-        local shots = ls:FindFirstChild("Shots")
-        local hits = ls:FindFirstChild("Hits")
-        if score then scoreLabel.Text = "Score: "..tostring(score.Value) end
-        if shots and hits then
-            local shotsV, hitsV = shots.Value, hits.Value
-            local acc = 0
-            if shotsV > 0 then acc = math.floor((hitsV / shotsV) * 100) end
-            statsLabel.Text = string.format("Hits: %d | Shots: %d | Accuracy: %d%%", hitsV, shotsV, acc)
+    targetPart:Destroy()
+    -- respawn simples depois de alguns segundos
+    delay(RESPAWN_DELAY, function()
+        -- spawn em torno da arena (reusing spawnTargets but single)
+        local center = Vector3.new(0,5,0)
+        local spawnLocation = Workspace:FindFirstChildWhichIsA("SpawnLocation")
+        if spawnLocation then center = spawnLocation.Position + Vector3.new(0, 3, 0) end
+        local pos = center + Vector3.new(math.random(-18,18), 0, math.random(-10,10))
+        local t = createTarget(pos)
+        -- movimento simples novamente
+        local amplitude = 1 + math.random() * 1.6
+        local speed = 1 + math.random() * 1.8
+        spawn(function()
+            while t.Parent and t:IsDescendantOf(game) do
+                local newPos = t.Position + Vector3.new(0, 0.8 * math.sin(tick()*speed) * amplitude, 0)
+                t.Position = newPos
+                wait(0.03)
+            end
+        end)
+    end)
+end
+
+-- Leaderstats simples
+local function onPlayerAdded(pl)
+    local leaderstats = Instance.new("Folder")
+    leaderstats.Name = "leaderstats"
+    leaderstats.Parent = pl
+
+    local score = Instance.new("IntValue")
+    score.Name = "Score"
+    score.Value = 0
+    score.Parent = leaderstats
+
+    local shots = Instance.new("IntValue")
+    shots.Name = "Shots"
+    shots.Value = 0
+    shots.Parent = leaderstats
+
+    local hits = Instance.new("IntValue")
+    hits.Name = "Hits"
+    hits.Value = 0
+    hits.Parent = leaderstats
+end
+Players.PlayerAdded:Connect(onPlayerAdded)
+
+-- Evento: cliente disparou com posição do mouse
+-- payload: {position = Vector3, timestamp = number}
+event.OnServerEvent:Connect(function(player, payload)
+    if not payload or typeof(payload.position) ~= "Vector3" then return end
+    local pos = payload.position
+    -- increment shots
+    if player and player:FindFirstChild("Shots") == nil and player:FindFirstChild("leaderstats") then
+        -- some setups may differ; attempt set below
+    end
+    if player and player:FindFirstChild("leaderstats") then
+        local shots = player.leaderstats:FindFirstChild("Shots")
+        if shots then shots.Value = shots.Value + 1 end
+    end
+
+    -- valida colisão com alvos no raio TARGET_RADIUS
+    for _, part in ipairs(arenaFolder:GetChildren()) do
+        if part:IsA("BasePart") and part.Name == "TrainingTarget" then
+            local dist = (part.Position - pos).Magnitude
+            if dist <= TARGET_RADIUS then
+                -- player acerta target
+                -- increment hits / score
+                if player and player:FindFirstChild("leaderstats") then
+                    local hits = player.leaderstats:FindFirstChild("Hits")
+                    local score = player.leaderstats:FindFirstChild("Score")
+                    if hits then hits.Value = hits.Value + 1 end
+                    if score then score.Value = score.Value + 10 end
+                end
+                -- efeito e respawn
+                handleTargetHit(part)
+                break
+            end
         end
     end
-end
-
--- observa mudanças
-local function onLeaderstatsAdded()
-    local ls = localPlayer:FindFirstChild("leaderstats")
-    if ls then
-        for _, v in pairs(ls:GetChildren()) do
-            v.Changed:Connect(updateHUD)
-        end
-    end
-    updateHUD()
-end
-
-if localPlayer:FindFirstChild("leaderstats") then
-    onLeaderstatsAdded()
-end
-local addedConn
-addedConn = localPlayer.ChildAdded:Connect(function(child)
-    if child.Name == "leaderstats" then
-        onLeaderstatsAdded()
-        addedConn:Disconnect()
-    end
 end)
 
--- feedback visual ao clicar (pequeno recoil UI)
-local recoilAmt = 4
-local function clickRecoil()
-    local origPos = cross.Position
-    local tweenTime = 0.06
-    cross.Position = UDim2.new(0.5, 0, 0.5, -recoilAmt)
-    wait(tweenTime)
-    cross.Position = origPos
-end
-
--- optional: som de clique local
-local clickSound = Instance.new("Sound", workspace)
-clickSound.SoundId = "rbxassetid://12222216" -- substitua se quiser outro som (ou remova)
-clickSound.Volume = 0.6
-clickSound.PlayOnRemove = false
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        -- feedbacks
-        coroutine.wrap(function()
-            pcall(clickRecoil)
-        end)()
-        pcall(function() clickSound:Play() end)
+-- inicializa targets se não houver
+spawn(function()
+    -- cleanup antigos
+    for _, c in ipairs(arenaFolder:GetChildren()) do
+        if c:IsA("BasePart") and c.Name == "TrainingTarget" then c:Destroy() end
     end
+    wait(0.2)
+    spawnTargets()
 end)
 
--- loop para atualizar UI central (crosshair) suavemente se quiser (aqui apenas mantém fixo)
-RunService.RenderStepped:Connect(function()
-    -- opcional: pulsar crosshair para efeito
-    -- cross.BackgroundTransparency = 0.0 + (math.abs(math.sin(tick()*6)) * 0.2)
-end)
-
-print("[TrainingClient] Cliente inicializado.")
+print("[TargetManager] Sistema de treino inicializado.")
